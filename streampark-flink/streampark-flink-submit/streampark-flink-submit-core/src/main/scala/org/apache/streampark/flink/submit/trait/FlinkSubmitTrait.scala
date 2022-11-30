@@ -31,11 +31,11 @@ import org.apache.flink.runtime.jobgraph.{JobGraph, SavepointConfigOptions}
 import org.apache.flink.util.FlinkException
 import org.apache.flink.util.Preconditions.checkNotNull
 import org.apache.streampark.common.conf.ConfigConst._
-import org.apache.streampark.common.conf.Workspace
+import org.apache.streampark.common.conf.{ConfigConst, Workspace}
 import org.apache.streampark.common.enums.{ApplicationType, DevelopmentMode, ExecutionMode, ResolveOrder}
-import org.apache.streampark.common.util.{Logger, SystemPropertyUtils, Utils}
+import org.apache.streampark.common.util.{DeflaterUtils, Logger, SystemPropertyUtils, Utils}
 import org.apache.streampark.flink.core.conf.FlinkRunOption
-import org.apache.streampark.flink.core.{ClusterClient => ClusterClientWrapper}
+import org.apache.streampark.flink.core.FlinkClusterClient
 import org.apache.streampark.flink.submit.bean._
 
 import java.io.File
@@ -47,7 +47,6 @@ import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.language.postfixOps
 import scala.util.{Failure, Success, Try}
-
 
 trait FlinkSubmitTrait extends Logger {
 
@@ -69,13 +68,10 @@ trait FlinkSubmitTrait extends Logger {
          |    k8sNamespace     : ${submitRequest.k8sSubmitParam.kubernetesNamespace}
          |    flinkExposedType : ${submitRequest.k8sSubmitParam.flinkRestExposedType}
          |    clusterId        : ${submitRequest.k8sSubmitParam.clusterId}
-         |    resolveOrder     : ${submitRequest.resolveOrder.getName}
          |    applicationType  : ${submitRequest.applicationType.getName}
          |    flameGraph       : ${submitRequest.flameGraph != null}
          |    savePoint        : ${submitRequest.savePoint}
-         |    option           : ${submitRequest.option}
-         |    property         : ${submitRequest.option}
-         |    dynamicOption    : ${submitRequest.dynamicOption.mkString(" ")}
+         |    properties       : ${submitRequest.properties.mkString(" ")}
          |    args             : ${submitRequest.args}
          |    appConf          : ${submitRequest.appConf}
          |    flinkBuildResult : ${submitRequest.buildResult}
@@ -95,15 +91,20 @@ trait FlinkSubmitTrait extends Logger {
       .safeSet(PipelineOptions.NAME, submitRequest.effectiveAppName)
       .safeSet(DeploymentOptions.TARGET, submitRequest.executionMode.getName)
       .safeSet(SavepointConfigOptions.SAVEPOINT_PATH, submitRequest.savePoint)
-      .safeSet(CoreOptions.CLASSLOADER_RESOLVE_ORDER, submitRequest.resolveOrder.getName)
       .safeSet(ApplicationConfiguration.APPLICATION_MAIN_CLASS, submitRequest.appMain)
       .safeSet(ApplicationConfiguration.APPLICATION_ARGS, extractProgramArgs(submitRequest))
-      .safeSet(PipelineOptionsInternal.PIPELINE_FIXED_JOB_ID, new JobID().toHexString)
+      .safeSet(PipelineOptionsInternal.PIPELINE_FIXED_JOB_ID, submitRequest.jobId)
 
     val flinkDefaultConfiguration = getFlinkDefaultConfiguration(submitRequest.flinkVersion.flinkHome)
     //state.checkpoints.num-retained
     val retainedOption = CheckpointingOptions.MAX_RETAINED_CHECKPOINTS
-    flinkConfig.set(retainedOption, flinkDefaultConfiguration.get(retainedOption))
+    flinkConfig.safeSet(retainedOption, flinkDefaultConfiguration.get(retainedOption))
+
+    //set savepoint parameter
+    if (submitRequest.savePoint != null) {
+      flinkConfig.safeSet(SavepointConfigOptions.SAVEPOINT_PATH, submitRequest.savePoint)
+      flinkConfig.setBoolean(SavepointConfigOptions.SAVEPOINT_IGNORE_UNCLAIMED_STATE, submitRequest.allowNonRestoredState)
+    }
 
     setConfig(submitRequest, flinkConfig)
 
@@ -160,9 +161,9 @@ trait FlinkSubmitTrait extends Logger {
   private[submit] def getJobGraph(flinkConfig: Configuration, submitRequest: SubmitRequest, jarFile: File): (PackagedProgram, JobGraph) = {
     val packageProgram = PackagedProgram
       .newBuilder
-      .setSavepointRestoreSettings(submitRequest.savepointRestoreSettings)
       .setJarFile(jarFile)
       .setEntryPointClassName(flinkConfig.getOptional(ApplicationConfiguration.APPLICATION_MAIN_CLASS).get())
+      .setSavepointRestoreSettings(submitRequest.savepointRestoreSettings)
       .setArguments(
         flinkConfig
           .getOptional(ApplicationConfiguration.APPLICATION_ARGS)
@@ -187,7 +188,7 @@ trait FlinkSubmitTrait extends Logger {
   //----------Public Method end ------------------
 
   private[submit] lazy val jvmProfilerJar: String = {
-    val pluginsPath = SystemPropertyUtils.get("app.home").concat("/plugins")
+    val pluginsPath = SystemPropertyUtils.get(ConfigConst.KEY_APP_HOME).concat("/plugins")
     val pluginsDir = new File(pluginsPath)
     pluginsDir.list().filter(_.matches("streampark-jvm-profiler-.*\\.jar")) match {
       case Array() => throw new IllegalArgumentException(s"[StreamPark] can no found streampark-jvm-profiler jar in $pluginsPath")
@@ -226,8 +227,8 @@ trait FlinkSubmitTrait extends Logger {
   }
 
   private[submit] def getParallelism(submitRequest: SubmitRequest): Integer = {
-    if (submitRequest.option.containsKey(KEY_FLINK_PARALLELISM())) {
-      Integer.valueOf(submitRequest.option.get(KEY_FLINK_PARALLELISM()).toString)
+    if (submitRequest.properties.containsKey(KEY_FLINK_PARALLELISM())) {
+      Integer.valueOf(submitRequest.properties.get(KEY_FLINK_PARALLELISM()).toString)
     } else {
       getFlinkDefaultConfiguration(submitRequest.flinkVersion.flinkHome).getInteger(
         CoreOptions.DEFAULT_PARALLELISM,
@@ -283,20 +284,10 @@ trait FlinkSubmitTrait extends Logger {
         array += s"-D${CoreOptions.FLINK_TM_JVM_OPTIONS.key()}=-javaagent:$$PWD/plugins/$jvmProfilerJar=$param"
       }
 
-      // The priority of the parameters defined on the page is greater than the app conf file, property parameters etc.
-      if (MapUtils.isNotEmpty(submitRequest.option)) {
-        submitRequest.option.foreach(x => array += s"-D${x._1.trim}=${x._2.toString.trim}")
+      // app properties
+      if (MapUtils.isNotEmpty(submitRequest.properties)) {
+        submitRequest.properties.foreach(x => array += s"-D${x._1}=${x._2}")
       }
-
-      //-D other dynamic parameter
-      if (submitRequest.dynamicOption != null && submitRequest.dynamicOption.nonEmpty) {
-        submitRequest.dynamicOption
-          .filter(_._1 != "classloader.resolve-order")
-          .foreach(x => array += s"-D${x._1}=${x._2}")
-      }
-
-      array += s"-Dclassloader.resolve-order=${submitRequest.resolveOrder.getName}"
-
       array.toArray
     }
 
@@ -324,25 +315,16 @@ trait FlinkSubmitTrait extends Logger {
     FlinkRunOption.mergeOptions(CliFrontendParser.getRunCommandOptions, customCommandLineOptions)
   }
 
-  private[submit] def extractConfiguration(flinkHome: String,
-                                           dynamicOption: JavaMap[String, String],
-                                           extraParameter: JavaMap[String, Any],
-                                           resolveOrder: ResolveOrder): Configuration = {
+  private[submit] def extractConfiguration(flinkHome: String, properties: JavaMap[String, Any]): Configuration = {
     val commandLine = {
       val commandLineOptions = getCommandLineOptions(flinkHome)
       //read and verify user config...
       val cliArgs = {
         val array = new ArrayBuffer[String]()
         // The priority of the parameters defined on the page is greater than the app conf file, property parameters etc.
-        if (MapUtils.isNotEmpty(extraParameter)) {
-          extraParameter.foreach(x => array += s"-D${x._1.trim}=${x._2.toString.trim}")
+        if (MapUtils.isNotEmpty(properties)) {
+          properties.foreach(x => array += s"-D${x._1}=${x._2.toString.trim}")
         }
-        if (dynamicOption != null && dynamicOption.nonEmpty) {
-          dynamicOption
-            .filter(_._1 != "classloader.resolve-order")
-            .foreach(x => array += s"-D${x._1}=${x._2}")
-        }
-        array += s"-Dclassloader.resolve-order=${resolveOrder.getName}"
         array.toArray
       }
       FlinkRunOption.parse(commandLineOptions, cliArgs, true)
@@ -357,62 +339,59 @@ trait FlinkSubmitTrait extends Logger {
     val programArgs = new ArrayBuffer[String]()
 
     if (StringUtils.isNotEmpty(submitRequest.args)) {
+      val multiLineChar = "\"\"\""
+      val array = submitRequest.args.split("\\s+")
+      if (array.filter(_.startsWith(multiLineChar)).isEmpty) {
+        array.foreach(programArgs +=)
+      } else {
+        val argsArray = new ArrayBuffer[String]()
+        val tempBuffer = new ArrayBuffer[String]()
 
-      val array = submitRequest.args.split("\\s")
-      val argsArray = new ArrayBuffer[String]()
-      val tempBuffer = new ArrayBuffer[String]()
-
-      def processElement(index: Int, num: Int): Unit = {
-
-        if (index == array.length) {
-          if (tempBuffer.nonEmpty) {
-            argsArray += tempBuffer.mkString(" ")
+        def processElement(index: Int, multiLine: Boolean): Unit = {
+          if (index == array.length) {
+            if (tempBuffer.nonEmpty) {
+              argsArray += tempBuffer.mkString(" ")
+            }
+            return
           }
-          return
-        }
+          val next = index + 1
+          val elem = array(index)
 
-        val next = index + 1
-        val elem = array(index)
-
-        if (elem.trim.nonEmpty) {
-          if (num == 0) {
-            if (elem.startsWith("'")) {
-              tempBuffer += elem
-              processElement(next, 1)
-            } else if (elem.startsWith("\"")) {
-              tempBuffer += elem
-              processElement(next, 2)
+          if (elem.trim.nonEmpty) {
+            if (!multiLine) {
+              if (elem.startsWith(multiLineChar)) {
+                tempBuffer += elem.drop(3)
+                processElement(next, true)
+              } else {
+                argsArray += elem
+                processElement(next, false)
+              }
             } else {
-              argsArray += elem
-              processElement(next, 0)
+              if (elem.endsWith(multiLineChar)) {
+                tempBuffer += elem.dropRight(3)
+                argsArray += tempBuffer.mkString(" ")
+                tempBuffer.clear()
+                processElement(next, false)
+              } else {
+                tempBuffer += elem
+                processElement(next, multiLine)
+              }
             }
           } else {
             tempBuffer += elem
-            val end1 = elem.endsWith("'") && num == 1
-            val end2 = elem.endsWith("\"") && num == 2
-            if (end1 || end2) {
-              argsArray += tempBuffer.mkString(" ")
-              tempBuffer.clear()
-              processElement(next, 0)
-            } else {
-              processElement(next, num)
-            }
+            processElement(next, false)
           }
-        } else {
-          tempBuffer += elem
-          processElement(next, 0)
         }
+        processElement(0, false)
+        argsArray.foreach(x => programArgs += x.trim)
       }
-
-      processElement(0, 0)
-      argsArray.foreach(x => programArgs += x.trim.replaceAll("^[\"|']|[\"|']$", ""))
     }
 
     if (submitRequest.applicationType == ApplicationType.STREAMPARK_FLINK) {
       programArgs += PARAM_KEY_FLINK_CONF
       programArgs += submitRequest.flinkYaml
       programArgs += PARAM_KEY_APP_NAME
-      programArgs += submitRequest.effectiveAppName
+      programArgs += DeflaterUtils.zipString(submitRequest.effectiveAppName)
       programArgs += PARAM_KEY_FLINK_PARALLELISM
       programArgs += getParallelism(submitRequest).toString
       submitRequest.developmentMode match {
@@ -486,11 +465,11 @@ trait FlinkSubmitTrait extends Logger {
 
     val clientTimeout = getOptionFromDefaultFlinkConfig(cancelRequest.flinkVersion.flinkHome, ClientOptions.CLIENT_TIMEOUT)
 
-    val clientWrapper = new ClusterClientWrapper(client)
+    val clientWrapper = new FlinkClusterClient(client)
 
     (Try(cancelRequest.withSavePoint).getOrElse(false), Try(cancelRequest.withDrain).getOrElse(false)) match {
       case (false, false) =>
-        clientWrapper.cancel(jobID).get()
+        client.cancel(jobID).get()
         null
       case (true, false) => clientWrapper.cancelWithSavepoint(jobID, savePointDir).get(clientTimeout.toMillis, TimeUnit.MILLISECONDS)
       case (_, _) => clientWrapper.stopWithSavepoint(jobID, cancelRequest.withDrain, savePointDir).get(clientTimeout.toMillis, TimeUnit.MILLISECONDS)

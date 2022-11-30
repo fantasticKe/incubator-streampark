@@ -16,13 +16,12 @@
  */
 package org.apache.streampark.flink.submit.test
 
+import org.apache.commons.lang3.StringUtils
 import org.apache.flink.api.java.utils.ParameterTool
+import org.apache.streampark.flink.submit.FlinkSubmitter
 import org.junit.jupiter.api.{Assertions, Test}
 
-import java.util.regex.Pattern
-import scala.annotation.tailrec
 import scala.collection.mutable.ArrayBuffer
-import scala.util.Try
 
 class ParameterTestCase {
 
@@ -47,67 +46,90 @@ class ParameterTestCase {
   }
 
   @Test def testExtractProgramArgs(): Unit = {
-
-    val argsStr = "--url localhost:8123 \n" +
-      "--insertSql1 'insert \'\'into default.test values (?,?,?,?,?)' \n" +
-      "--insertSql2 'insert into default.test values (1,2,3,4,\"111\")'\n "+
-      "--insertSql2 \"insert into default.test values (1,2,3,4,\'111\')\" \n" +
-      "--insertSql2 'insert into default.test values (1,2,3,4,\"111\", \'22\', \'\')'"
-
-    val array = argsStr.split("\\s")
-    val argsArray = new ArrayBuffer[String]()
-    val tempBuffer = new ArrayBuffer[String]()
-
-    def processElement(index: Int, num: Int): Unit = {
-
-      if (index == array.length) {
-        if (tempBuffer.nonEmpty) {
-          argsArray += tempBuffer.mkString(" ")
-        }
-        return
-      }
-
-      val next = index + 1
-      val elem = array(index)
-
-      if (elem.trim.nonEmpty) {
-        if (num == 0) {
-          if (elem.startsWith("'")) {
-            tempBuffer += elem
-            processElement(next, 1)
-          } else if (elem.startsWith("\"")) {
-            tempBuffer += elem
-            processElement(next, 2)
-          } else {
-            argsArray += elem
-            processElement(next, 0)
-          }
-        } else {
-          tempBuffer += elem
-          val end1 = elem.endsWith("'") && num == 1
-          val end2 = elem.endsWith("\"") && num == 2
-          if (end1 || end2) {
-            argsArray += tempBuffer.mkString(" ")
-            tempBuffer.clear()
-            processElement(next, 0)
-          } else {
-            processElement(next, num)
-          }
-        }
+    val argsStr = "--host localhost:8123\n\n\n" +
+      "--sql \"\"\"insert into table_a select * from table_b\"\"\"\n" +
+      "--c d\r\n" +
+      "--x yyy"
+    val programArgs = new ArrayBuffer[String]()
+    if (StringUtils.isNotEmpty(argsStr)) {
+      val multiLineChar = "\"\"\""
+      val array = argsStr.split("\\s+")
+      if (array.filter(_.startsWith(multiLineChar)).isEmpty) {
+        array.foreach(programArgs +=)
       } else {
-        tempBuffer += elem
-        processElement(next, 0)
+        val argsArray = new ArrayBuffer[String]()
+        val tempBuffer = new ArrayBuffer[String]()
+
+        def processElement(index: Int, multiLine: Boolean): Unit = {
+
+          if (index == array.length) {
+            if (tempBuffer.nonEmpty) {
+              argsArray += tempBuffer.mkString(" ")
+            }
+            return
+          }
+
+          val next = index + 1
+          val elem = array(index)
+
+          if (elem.trim.nonEmpty) {
+            if (!multiLine) {
+              if (elem.startsWith(multiLineChar)) {
+                tempBuffer += elem.drop(3)
+                processElement(next, true)
+              } else {
+                argsArray += elem
+                processElement(next, false)
+              }
+            } else {
+              if (elem.endsWith(multiLineChar)) {
+                tempBuffer += elem.dropRight(3)
+                argsArray += tempBuffer.mkString(" ")
+                tempBuffer.clear()
+                processElement(next, false)
+              } else {
+                tempBuffer += elem
+                processElement(next, multiLine)
+              }
+            }
+          } else {
+            tempBuffer += elem
+            processElement(next, false)
+          }
+        }
+
+        processElement(0, false)
+        argsArray.foreach(x => programArgs += x.trim)
       }
     }
-    processElement(0, 0)
-
-    val programArgs = argsArray.map(_.trim.replaceAll("^[\"|']|[\"|']$","")).toList
 
     Assertions.assertEquals("localhost:8123", programArgs(1))
-    Assertions.assertEquals("insert \'\'into default.test values (?,?,?,?,?)", programArgs(3))
-    Assertions.assertEquals("insert into default.test values (1,2,3,4,\"111\")", programArgs(5))
-    Assertions.assertEquals("insert into default.test values (1,2,3,4,\'111\')", programArgs(7))
-    Assertions.assertEquals("insert into default.test values (1,2,3,4,\"111\", \'22\', \'\')", programArgs(9))
-
+    Assertions.assertEquals("insert into table_a select * from table_b", programArgs(3))
+    Assertions.assertEquals("d", programArgs(5))
+    Assertions.assertEquals("yyy", programArgs(7))
   }
+
+  @Test def testDynamicProperties(): Unit = {
+    val dynamicProperties =
+      """
+        |-Denv.java.opts1="-Dfile.encoding=UTF-8"
+        |-Denv.java.opts2 = "-Dfile.enc\"oding=UTF-8"
+        |-Denv.java.opts3 = " -Dfile.encoding=UTF-8"
+        |-Dyarn.application.id=123
+        |-Dyarn.application.name="streampark job"
+        |-Dyarn.application.queue=flink
+        |-Ddiy.param.name=apache streampark
+        |
+        |""".stripMargin
+
+    val map = FlinkSubmitter.extractDynamicProperties(dynamicProperties)
+    Assertions.assertEquals(map("env.java.opts1"), "-Dfile.encoding=UTF-8")
+    Assertions.assertEquals(map("env.java.opts2"), "-Dfile.enc\\\"oding=UTF-8")
+    Assertions.assertEquals(map("env.java.opts3"), " -Dfile.encoding=UTF-8")
+    Assertions.assertEquals(map("yarn.application.id"), "123")
+    Assertions.assertEquals(map("yarn.application.name"), "streampark job")
+    Assertions.assertEquals(map("yarn.application.queue"), "flink")
+    Assertions.assertEquals(map("diy.param.name"), "apache streampark")
+  }
+
 }

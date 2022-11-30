@@ -20,7 +20,7 @@ package org.apache.streampark.console.core.entity;
 import org.apache.streampark.common.util.DependencyUtils;
 
 import lombok.extern.slf4j.Slf4j;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -31,10 +31,10 @@ import java.util.TimerTask;
 import scala.collection.JavaConversions;
 
 @Slf4j
-public class DependencyTest {
+class DependencyTest {
 
     @Test
-    public void resolveMavenDependencies() {
+    void resolveMavenDependencies() {
         /**
          * <dependency>
          *      <groupId>org.apache.flink</groupId>

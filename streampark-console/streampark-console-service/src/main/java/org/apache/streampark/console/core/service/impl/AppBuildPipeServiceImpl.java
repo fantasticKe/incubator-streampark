@@ -70,11 +70,9 @@ import org.apache.streampark.flink.packer.pipeline.impl.FlinkRemoteBuildPipeline
 import org.apache.streampark.flink.packer.pipeline.impl.FlinkYarnApplicationBuildPipeline;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
-import com.google.common.collect.Maps;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections.CollectionUtils;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -85,6 +83,7 @@ import org.springframework.transaction.annotation.Transactional;
 import javax.annotation.Nonnull;
 
 import java.io.File;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -234,7 +233,7 @@ public class AppBuildPipeServiceImpl
                     } else {
                         app.setOptionState(OptionState.NONE.getValue());
                         app.setLaunch(LaunchState.DONE.get());
-                        //如果当前任务未运行,或者刚刚新增的任务,则直接将候选版本的设置为正式版本
+                        // If the current task is not running, or the task has just been added, directly set the candidate version to the official version
                         if (app.isFlinkSqlJob()) {
                             applicationService.toEffective(app);
                         } else {
@@ -260,7 +259,7 @@ public class AppBuildPipeServiceImpl
 
                 } else {
                     Message message = new Message(
-                        commonService.getCurrentUser().getUserId(),
+                        commonService.getUserId(),
                         app.getId(),
                         app.getJobName().concat(" launch failed"),
                         ExceptionUtils.stringifyException(snapshot.error().exception()),
@@ -387,7 +386,8 @@ public class AppBuildPipeServiceImpl
                 log.info("Submit params to building pipeline : {}", k8sApplicationBuildRequest);
                 return FlinkK8sApplicationBuildPipeline.of(k8sApplicationBuildRequest);
             default:
-                throw new UnsupportedOperationException("Unsupported Building Application for ExecutionMode: " + app.getExecutionModeEnum());
+                throw new UnsupportedOperationException(
+                    "Unsupported Building Application for ExecutionMode: " + app.getExecutionModeEnum());
         }
     }
 
@@ -435,24 +435,23 @@ public class AppBuildPipeServiceImpl
     @Override
     public boolean allowToBuildNow(@Nonnull Long appId) {
         return getCurrentBuildPipeline(appId)
-            .map(pipeline -> PipelineStatus.running != pipeline.getPipeStatus())
+            .map(pipeline -> PipelineStatus.running != pipeline.getPipelineStatus())
             .orElse(true);
     }
 
     @Override
     public Map<Long, PipelineStatus> listPipelineStatus(List<Long> appIds) {
         if (CollectionUtils.isEmpty(appIds)) {
-            return Maps.newHashMap();
+            return Collections.emptyMap();
         }
-        QueryWrapper<AppBuildPipeline> query = new QueryWrapper<>();
-        query.select("app_id", "pipe_status").in("app_id", appIds);
-        List<Map<String, Object>> rMaps = baseMapper.selectMaps(query);
-        if (CollectionUtils.isEmpty(rMaps)) {
-            return Maps.newHashMap();
+        LambdaQueryWrapper<AppBuildPipeline> queryWrapper = new LambdaQueryWrapper<AppBuildPipeline>()
+            .in(AppBuildPipeline::getAppId, appIds);
+
+        List<AppBuildPipeline> appBuildPipelines = baseMapper.selectList(queryWrapper);
+        if (CollectionUtils.isEmpty(appBuildPipelines)) {
+            return Collections.emptyMap();
         }
-        return rMaps.stream().collect(Collectors.toMap(
-            e -> (Long) e.get("app_id"),
-            e -> PipelineStatus.of((Integer) e.get("pipe_status"))));
+        return appBuildPipelines.stream().collect(Collectors.toMap(e -> e.getAppId(), e -> e.getPipelineStatus()));
     }
 
     @Override

@@ -17,19 +17,17 @@
 
 package java.util.concurrent;
 
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
-
 import org.apache.streampark.common.util.CompletableFutureUtils;
 
-import org.junit.Test;
+import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class CompletableFutureTest {
+class CompletableFutureTest {
 
     @Test
-    public void testStartJobNormally() throws Exception {
+    void testStartJobNormally() throws Exception {
         // It takes 5 seconds to start job.
         CompletableFuture<String> future = CompletableFuture.supplyAsync(() -> runStart(5));
 
@@ -48,13 +46,13 @@ public class CompletableFutureTest {
             e -> isStartException.set(true)
         ).get();
 
-        assertTrue(future.isDone());
-        assertTrue(isStartNormal.get());
-        assertFalse(isStartException.get());
+        Assertions.assertTrue(future.isDone());
+        Assertions.assertTrue(isStartNormal.get());
+        Assertions.assertFalse(isStartException.get());
     }
 
     @Test
-    public void testStopJobEarly() throws Exception {
+    void testStopJobEarly() throws Exception {
         // It takes 10 seconds to start job.
         CompletableFuture<String> future = CompletableFuture.supplyAsync(() -> runStart(10));
 
@@ -75,18 +73,18 @@ public class CompletableFutureTest {
             },
             e -> {
                 isStartException.set(true);
-                assertTrue(future.isCancelled());
-                assertTrue(e.getCause() instanceof CancellationException);
+                Assertions.assertTrue(future.isCancelled());
+                Assertions.assertTrue(e.getCause() instanceof CancellationException);
                 System.out.println("The future is cancelled.");
             }
         ).get();
-        assertTrue(future.isCancelled());
-        assertFalse(isStartNormal.get());
-        assertTrue(isStartException.get());
+        Assertions.assertTrue(future.isCancelled());
+        Assertions.assertFalse(isStartNormal.get());
+        Assertions.assertTrue(isStartException.get());
     }
 
     @Test
-    public void testStartJobTimeout() throws Exception {
+    void testStartJobTimeout() throws Exception {
 
         // It takes 10 seconds to start job.
         CompletableFuture<String> future = CompletableFuture.supplyAsync(() -> runStart(10));
@@ -108,15 +106,15 @@ public class CompletableFutureTest {
             },
             e -> {
                 isStartException.set(true);
-                assertFalse(future.isDone());
-                assertTrue(e.getCause() instanceof TimeoutException);
+                Assertions.assertFalse(future.isDone());
+                Assertions.assertTrue(e.getCause() instanceof TimeoutException);
                 future.cancel(true);
                 System.out.println("Future is timed out.");
             }
         ).get();
-        assertTrue(future.isCancelled());
-        assertFalse(isStartNormal.get());
-        assertTrue(isStartException.get());
+        Assertions.assertTrue(future.isCancelled());
+        Assertions.assertFalse(isStartNormal.get());
+        Assertions.assertTrue(isStartException.get());
     }
 
     /**

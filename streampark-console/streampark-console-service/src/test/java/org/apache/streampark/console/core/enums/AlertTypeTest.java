@@ -22,7 +22,7 @@ import org.junit.jupiter.api.Test;
 import java.util.Arrays;
 import java.util.List;
 
-public class AlertTypeTest {
+class AlertTypeTest {
     @Test
     void decodeTest() {
         List<AlertType> notifyTypes = AlertType.decode(5);
@@ -31,7 +31,7 @@ public class AlertTypeTest {
 
     @Test
     void encodeTest() {
-        int level = AlertType.encode(Arrays.asList(AlertType.dingTalk, AlertType.email));
+        int level = AlertType.encode(Arrays.asList(AlertType.DING_TALK, AlertType.EMAIL));
         System.out.println(level);
     }
 }

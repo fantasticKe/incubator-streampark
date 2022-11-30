@@ -28,21 +28,21 @@ import org.apache.streampark.console.core.service.alert.impl.LarkAlertNotifyServ
 import org.apache.streampark.console.core.service.alert.impl.WeComAlertNotifyServiceImpl;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.Date;
 import java.util.TimeZone;
 
-public class AlertServiceTest {
+class AlertServiceTest {
     AlertTemplate alertTemplate;
     AlertConfigWithParams params = new AlertConfigWithParams();
     ObjectMapper mapper = new ObjectMapper();
     RestTemplate restTemplate = new RestTemplate();
 
-    @Before
-    public void before1() {
+    @BeforeEach
+    void before1() {
         alertTemplate = new AlertTemplate();
         alertTemplate.setTitle("Notify: StreamPark alert job for test");
         alertTemplate.setSubject("StreamPark Alert: test-job OTHER");
@@ -56,10 +56,10 @@ public class AlertServiceTest {
         Date date = new Date();
         alertTemplate.setStartTime(DateUtils.format(date, DateUtils.fullFormat(), TimeZone.getDefault()));
         alertTemplate.setEndTime(DateUtils.format(date, DateUtils.fullFormat(), TimeZone.getDefault()));
-        alertTemplate.setDuration(DateUtils.toRichTimeDuration(0));
+        alertTemplate.setDuration("");
     }
 
-    public void before2() {
+    void before2() {
         alertTemplate = new AlertTemplate();
         alertTemplate.setTitle("Alert: StreamPark alert job for test");
         alertTemplate.setSubject("StreamPark Alert: test-job OTHER");
@@ -72,11 +72,11 @@ public class AlertServiceTest {
         Date date = new Date();
         alertTemplate.setStartTime(DateUtils.format(date, DateUtils.fullFormat(), TimeZone.getDefault()));
         alertTemplate.setEndTime(DateUtils.format(date, DateUtils.fullFormat(), TimeZone.getDefault()));
-        alertTemplate.setDuration(DateUtils.toRichTimeDuration(0));
+        alertTemplate.setDuration("");
     }
 
     @Test
-    public void dingTalkAlertTest() throws Exception {
+    void dingTalkAlertTest() throws Exception {
         DingTalkAlertNotifyServiceImpl notifyService = new DingTalkAlertNotifyServiceImpl(restTemplate);
 
         notifyService.loadTemplateFile();
@@ -92,7 +92,7 @@ public class AlertServiceTest {
     }
 
     @Test
-    public void weComAlertTest() throws Exception {
+    void weComAlertTest() throws Exception {
         WeComAlertNotifyServiceImpl notifyService = new WeComAlertNotifyServiceImpl(restTemplate);
         notifyService.loadTemplateFile();
 
@@ -106,7 +106,7 @@ public class AlertServiceTest {
     }
 
     @Test
-    public void larkAlertTest() {
+    void larkAlertTest() {
         LarkAlertNotifyServiceImpl notifyService = new LarkAlertNotifyServiceImpl(restTemplate, mapper);
         notifyService.loadTemplateFile();
 

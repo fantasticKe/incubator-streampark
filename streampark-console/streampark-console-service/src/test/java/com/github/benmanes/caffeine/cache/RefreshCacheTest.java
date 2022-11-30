@@ -17,17 +17,17 @@
 
 package com.github.benmanes.caffeine.cache;
 
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
-public class RefreshCacheTest {
+class RefreshCacheTest {
 
     Cache<String, String> caffeine = null;
 
     @Test
-    public void cache() throws Exception {
+    void cache() throws Exception {
         if (caffeine == null) {
             caffeine = Caffeine.newBuilder()
                 .refreshAfterWrite(50, TimeUnit.MILLISECONDS)

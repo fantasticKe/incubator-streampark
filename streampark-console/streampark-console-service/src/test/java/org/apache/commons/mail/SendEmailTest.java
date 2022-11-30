@@ -26,8 +26,8 @@ import org.apache.streampark.console.core.entity.Application;
 import org.apache.streampark.console.core.enums.FlinkAppState;
 
 import freemarker.template.Template;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 import java.io.StringWriter;
 import java.util.Date;
@@ -35,14 +35,14 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.TimeZone;
 
-public class SendEmailTest {
+class SendEmailTest {
 
     private Template template;
 
     private SenderEmail senderEmail;
 
-    @Before
-    public void initConfig() throws Exception {
+    @BeforeEach
+    void initConfig() throws Exception {
         this.template = FreemarkerUtils.loadTemplateFile("alert-email.ftl");
         senderEmail = new SenderEmail();
         senderEmail.setFrom("****@domain.com");
@@ -54,7 +54,7 @@ public class SendEmailTest {
     }
 
     @Test
-    public void alert() {
+    void alert() {
         Application application = new Application();
         application.setStartTime(new Date());
         application.setJobName("Test My Job");
@@ -99,20 +99,21 @@ public class SendEmailTest {
         } else {
             duration = application.getEndTime().getTime() - application.getStartTime().getTime();
         }
-        duration = duration / 1000 / 60;
         String format = "%s/proxy/%s/";
         String url = String.format(format, YarnUtils.getRMWebAppURL(), application.getAppId());
 
         AlertTemplate template = new AlertTemplate();
         template.setJobName(application.getJobName());
         template.setStartTime(DateUtils.format(application.getStartTime(), DateUtils.fullFormat(), TimeZone.getDefault()));
-        template.setDuration(DateUtils.toRichTimeDuration(duration));
+        template.setDuration(DateUtils.toDuration(duration));
         template.setLink(url);
-        template.setEndTime(DateUtils.format(application.getEndTime() == null ? new Date() : application.getEndTime(), DateUtils.fullFormat(), TimeZone.getDefault()));
+        template.setEndTime(
+            DateUtils.format(application.getEndTime() == null ? new Date() : application.getEndTime(), DateUtils.fullFormat(),
+                TimeZone.getDefault()));
         template.setRestart(application.isNeedRestartOnFailed());
         template.setRestartIndex(application.getRestartCount());
         template.setTotalRestart(application.getRestartSize());
-        template.setCpFailureRateInterval(DateUtils.toRichTimeDuration(application.getCpFailureRateInterval()));
+        template.setCpFailureRateInterval(DateUtils.toDuration(application.getCpFailureRateInterval() * 1000 * 60));
         template.setCpMaxFailureInterval(application.getCpMaxFailureInterval());
 
         return template;
